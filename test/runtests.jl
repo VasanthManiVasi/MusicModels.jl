@@ -1,6 +1,5 @@
 using MusicModels
+using NoteSequences
 using Test
 
-@testset "MusicModels.jl" begin
-    # Write your tests here.
-end
+include("musicencoders.jl")

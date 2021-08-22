@@ -1,0 +1,149 @@
+using Flux: loadparams!
+
+import ..loading_method
+
+loading_method(::Val{:unconditional}) = load_unconditional_musictransformer
+loading_method(::Val{:melodyconditioned}) = load_melodyconditioned_musictransformer
+
+function load_transformer_encoder!(model, weights, num_layers::Int)
+    layers = keys(weights)
+    for i = 1:num_layers
+        # Get all layers in a block
+        block = filter(l->occursin("layer_$(i-1)/", l), layers)
+        for k ∈ block
+            if occursin("self_attention", k)
+                if occursin("q/kernel", k)
+                    loadparams!(model[i].mh.iqproj.W, [weights[k]])
+                elseif occursin("k/kernel", k)
+                    loadparams!(model[i].mh.ikproj.W, [weights[k]])
+                elseif occursin("v/kernel", k)
+                    loadparams!(model[i].mh.ivproj.W, [weights[k]])
+                elseif occursin("output_transform/kernel", k)
+                    loadparams!(model[i].mh.oproj.W, [weights[k]])
+                elseif occursin("layer_norm_scale", k)
+                    loadparams!(model[i].mhn.diag.α, [weights[k]])
+                elseif occursin("layer_norm_bias", k)
+                    loadparams!(model[i].mhn.diag.β, [weights[k]])
+                else
+                    @warn "Unknown variable: $k"
+                end
+            elseif occursin("ffn", k)
+                if occursin("conv1/kernel", k)
+                    loadparams!(model[i].pw.din.W, [weights[k]])
+                elseif occursin("conv1/bias", k)
+                    loadparams!(model[i].pw.din.b, [weights[k]])
+                elseif occursin("conv2/kernel", k)
+                    loadparams!(model[i].pw.dout.W, [weights[k]])
+                elseif occursin("conv2/bias", k)
+                    loadparams!(model[i].pw.dout.b, [weights[k]])
+                elseif occursin("layer_norm_scale", k)
+                    loadparams!(model[i].pwn.diag.α, [weights[k]])
+                elseif occursin("layer_norm_bias", k)
+                    loadparams!(model[i].pwn.diag.β, [weights[k]])
+                else
+                    @warn "Unknown variable: $k"
+                end
+            else
+                @warn "Unknown variable: $k"
+            end
+        end
+    end
+
+    # Captures both encoder/layer_prepostprocess and decoder/layer_prepostprocess
+    output_norm = filter(l->occursin("coder/layer_prepostprocess/layer_norm", l), layers)
+    block_index = num_layers + 1
+    for k ∈ output_norm
+        if occursin("layer_norm_scale", k)
+            loadparams!(model[block_index].diag.α, [weights[k]])
+        elseif occursin("layer_norm_bias", k)
+            loadparams!(model[block_index].diag.β, [weights[k]])
+        end
+    end
+end
+
+function load_transformer_decoder!(model, weights, num_layers::Int)
+    # Except for the encoder-decoder attention layer in the decoder,
+    # the rest of the layers are similar for both the encoder and decoder
+    # So we load the rest of the layers using the load_transformer_encoder
+    layers = filter(kv -> !occursin("encdec_attention", kv.first), weights)
+    load_transformer_encoder!(model, layers, num_layers)
+
+    # Load the encdec_attention layer
+    layers = keys(weights)
+    for i = 1:num_layers
+        # Get all layers in a block
+        block = filter(l->occursin("layer_$(i-1)/", l), layers)
+        for k ∈ block
+            if occursin("encdec_attention", k)
+                if occursin("q/kernel", k)
+                    loadparams!(model[i].imh.iqproj.W, [weights[k]])
+                elseif occursin("k/kernel", k)
+                    loadparams!(model[i].imh.ikproj.W, [weights[k]])
+                elseif occursin("v/kernel", k)
+                    loadparams!(model[i].imh.ivproj.W, [weights[k]])
+                elseif occursin("output_transform/kernel", k)
+                    loadparams!(model[i].imh.oproj.W, [weights[k]])
+                elseif occursin("layer_norm_scale", k)
+                    loadparams!(model[i].imhn.diag.α, [weights[k]])
+                elseif occursin("layer_norm_bias", k)
+                    loadparams!(model[i].imhn.diag.β, [weights[k]])
+                else
+                    @warn "Unknown variable: $k"
+                end
+            end
+        end
+    end
+end
+
+function load_unconditional_musictransformer(weights, config)
+    num_layers = config["num_layers"]
+    heads = config["heads"]
+    depth = config["depth"]
+    ffn_depth = config["ffn_depth"]
+
+    mt = UnconditionalMusicTransformer(depth, heads, ffn_depth, num_layers)
+
+    # Load encoder layers
+    load_transformer_encoder!(mt.body, weights, num_layers)
+
+    # Load embedding
+    embedding = weights["transformer/symbol_modality_310_512/shared/weights_0"]
+    loadparams!(mt.embedding[1], [embedding])
+
+    # This model shares embedding and softmax weights
+    # TODO: use Base.lastindex once it's defined for Stack
+    # 16 transformer body blocks, 1 output layer norm, + 1 is the last embedding-softmax layer
+    last_layer = num_layers + 1 + 1
+    loadparams!(mt.body[last_layer].W, [embedding'])
+
+    mt
+end
+
+function load_melodyconditioned_musictransformer(weights, config)
+    num_layers = config["num_layers"]
+    heads = config["heads"]
+    depth = config["depth"]
+    ffn_depth = config["ffn_depth"]
+
+    mt = MelodyConditionedMusicTransformer(depth, heads, ffn_depth, num_layers, num_layers)
+    encoder_weights = filter(kv -> occursin("encoder", kv.first), weights)
+    load_transformer_encoder!(mt.encoder, encoder_weights, num_layers)
+    decoder_weights = filter(kv -> occursin("decoder", kv.first), weights)
+    load_transformer_decoder!(mt.decoder, decoder_weights, num_layers)
+
+    # Load embeddings
+    input_embedding = weights["transformer/symbol_modality_92_512/input_emb/weights_0"]
+    loadparams!(mt.encoder_embedding[1], [input_embedding])
+
+    target_space_embedding = weights["transformer/body/target_space_embedding/kernel"]
+    loadparams!(mt.encoder_embedding[2], [target_space_embedding])
+
+    target_embedding = weights["transformer/symbol_modality_310_512/target_emb/weights_0"]
+    loadparams!(mt.decoder_embedding[1], [target_embedding])
+
+    softmax_embedding = weights["transformer/symbol_modality_310_512/softmax/weights_0"]
+    # $num_layers transformer body blocks, 1 postprocess layernorm, + 1 is the last embedding layer
+    last_layer = num_layers + 1 + 1
+    loadparams!(mt.decoder[last_layer], [softmax_embedding'])
+    mt
+end
