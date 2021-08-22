@@ -14,6 +14,12 @@ end
 include("pretrain.jl")
 include("datasets.jl")
 include("MusicTransformer/MusicTransformer.jl")
+include("PerformanceRNN/PerformanceRNN.jl")
+
+using .PerformanceRNN
+using .MusicTransformer
+
+export generate
 
 function call_registers()
     register_configs(pretrained_configs)
