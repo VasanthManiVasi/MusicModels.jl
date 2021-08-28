@@ -29,6 +29,8 @@ midi = generate(perfrnn, numsteps=3000)
 save("perfrnn_generated.mid", midi)
 ```
 
+See `examples/Melody Conditioning` for an example of using the Melody-Conditioned Music Transformer to generate an accompaniment given a melody.
+
 ## Available Models
 
 | Model Name                           | Function                                       |
@@ -48,5 +50,5 @@ save("perfrnn_generated.mid", midi)
 
 ## Training
 
-To train a new music transformer or to fine-tune one of the available models on your own collection of midi files, the midi files must first be converted to one-hot indices, which can then be fed to the model as inputs. Please refer to `examples/maestro_datagen.jl` for an example script on converting midifiles to model inputs. The example provided performs data generation for training a piano performance language model on the MAESTRO dataset.
-Finally, see `examples/maestro_train.jl` for a training script to train a language model on the processed MAESTRO dataset we obtained from data generation. The examples can be modified for training on your own data.
+To train a new music transformer or to fine-tune one of the available models on your own collection of midi files, the midi files must first be converted to one-hot indices, which can then be fed to the model as inputs. Please refer to `examples/MAESTRO Language Modelling/maestro_datagen.jl` for an example script on converting midifiles to model inputs. The example provided performs data generation for training a piano performance language model on the MAESTRO dataset.
+Finally, see `examples/MAESTRO Language Modelling/maestro_train.jl` for a training script to train a language model on the processed MAESTRO dataset we obtained from data generation. The examples can be modified for training on your own data.
